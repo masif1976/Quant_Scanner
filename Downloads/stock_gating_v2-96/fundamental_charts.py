@@ -353,15 +353,17 @@ def profitability_dropdown_chart(hist: dict, ticker: str = "") -> go.Figure:
 # ─────────────────────────────────────────────────────────────────────────
 
 def chart_config() -> dict:
-    """Config for st.plotly_chart. displayModeBar='hover' means the toolbar
-    only appears when the user hovers the chart, so it never sits on top of
-    the title (the root cause of the cramped look in the first build)."""
+    """Config for st.plotly_chart. The modebar shows on hover (the 54px top
+    margin keeps it clear of the title), giving zoom / pan / autoscale /
+    reset / download tools. Streamlit's own fullscreen ⛶ button (top-right
+    on hover) also lets users expand any chart to full screen."""
     return {
-        "displayModeBar": False,          # hidden until hover (Streamlit shows on hover)
+        "displayModeBar": "hover",        # toolbar appears on hover only
         "displaylogo": False,
         "modeBarButtonsToRemove": ["lasso2d", "select2d"],
         "toImageButtonOptions": {"format": "png", "scale": 2},
         "scrollZoom": False,
+        "responsive": True,
     }
 
 
@@ -482,33 +484,36 @@ def shares_outstanding_chart(bal: dict, ticker: str = "") -> go.Figure:
                       bal.get("note") or "No share-count data")
     periods = bal["periods"]
     shares = bal.get("shares") or []
-    pts = [(p, s) for p, s in zip(periods, shares) if s is not None]
+    pts = [(str(p), s) for p, s in zip(periods, shares) if s is not None]
     if len(pts) < 2:
         return _empty("Shares Outstanding", "Not enough share-count history")
     xs = [p for p, _ in pts]
     ys = [s for _, s in pts]
-    # Trend: falling shares (buyback) is shareholder-friendly → green;
-    # rising (dilution) → amber.
     trend_up = ys[-1] > ys[0]
     line_col = "#e8a838" if trend_up else _C_PRICE
-    label = "▲ diluting" if trend_up else "▼ buying back"
+    # Show the % change over the window so a tiny-looking move has context.
+    pct = (ys[-1] / ys[0] - 1) * 100 if ys[0] else 0
+    label = (f"▲ diluting +{pct:.1f}%" if trend_up
+             else f"▼ buying back {pct:.1f}%")
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=xs, y=ys, mode="lines+markers",
         line=dict(color=line_col, width=2.5),
-        marker=dict(size=6, color=line_col),
-        fill="tozeroy",
-        fillcolor=("rgba(232,168,56,0.10)" if trend_up
-                   else "rgba(63,185,80,0.10)"),
+        marker=dict(size=7, color=line_col),
+        # NOTE: no fill-to-zero — that compresses small year-over-year moves
+        # into an unreadable band at the top. We zoom the y-axis to the
+        # actual data range instead, so the trend is visible.
         customdata=[_humanize_shares(v) for v in ys],
         hovertemplate="%{customdata} shares<br>%{x}<extra></extra>",
     ))
     fig = _base(fig, f"Shares Outstanding  {label}", height=300)
+    # X as categories so years render as 2022/2023 (not 2,022.5 interpolated)
+    fig.update_xaxes(type="category")
     _apply_shares_yaxis(fig, ys)
     return fig
 
 
-def _humanize_shares(v) -> str:
+def _humanize_shares(v, decimals: int = 2) -> str:
     """Format a share count as 1.23B / 456.7M shares."""
     try:
         n = float(v)
@@ -516,7 +521,7 @@ def _humanize_shares(v) -> str:
         return "n/a"
     a = abs(n)
     if a >= 1e9:
-        return f"{n/1e9:.2f}B"
+        return f"{n/1e9:.{decimals}f}B"
     if a >= 1e6:
         return f"{n/1e6:.1f}M"
     if a >= 1e3:
@@ -525,19 +530,27 @@ def _humanize_shares(v) -> str:
 
 
 def _apply_shares_yaxis(fig, values):
-    """Y-axis ticks as share counts (B/M), not SI 'G'."""
+    """Zoom the y-axis to the actual share-count range with 3 well-spaced,
+    non-overlapping tick labels. Small year-over-year share moves are real
+    signal (buybacks are gradual), so we DON'T anchor to zero — we frame the
+    true range with modest padding."""
     nums = [float(v) for v in values if v is not None]
     if not nums:
         return
     lo, hi = min(nums), max(nums)
-    # Pad the range a little so the line isn't glued to the edges.
-    pad = (hi - lo) * 0.1 or hi * 0.05 or 1
-    lo, hi = lo - pad, hi + pad
-    n = 4
-    step = (hi - lo) / n
-    tickvals = [lo + step * i for i in range(n + 1)]
-    ticktext = [_humanize_shares(v) for v in tickvals]
-    fig.update_yaxes(tickvals=tickvals, ticktext=ticktext)
+    span = hi - lo
+    if span <= 0:
+        # Flat series — synthesize a small band so the line sits mid-chart.
+        span = hi * 0.04 or 1
+    pad = span * 0.6           # generous pad so the line isn't glued to edges
+    y0, y1 = lo - pad, hi + pad
+    # 3 ticks (bottom / mid / top) — few enough that labels never collide.
+    tickvals = [y0, (y0 + y1) / 2, y1]
+    # Enough precision that the three labels are distinct even for tiny ranges.
+    rng = y1 - y0
+    dec = 2 if rng >= 1e8 else 3
+    ticktext = [_humanize_shares(v, decimals=dec) for v in tickvals]
+    fig.update_yaxes(range=[y0, y1], tickvals=tickvals, ticktext=ticktext)
 
 
 # ─────────────────────────────────────────────────────────────────────────
