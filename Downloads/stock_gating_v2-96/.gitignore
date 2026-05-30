@@ -1,0 +1,40 @@
+# ── Secrets (NEVER commit) ──
+.streamlit/secrets.toml
+.env
+*.key
+secrets.toml
+
+# ── Python ──
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+build/
+dist/
+*.egg-info/
+
+# ── Virtual environments ──
+venv/
+.venv/
+env/
+ENV/
+
+# ── Local databases / caches (per-user state, not code) ──
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+
+# ── OS / editor ──
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# ── Test / coverage artifacts ──
+.pytest_cache/
+.coverage
+htmlcov/
