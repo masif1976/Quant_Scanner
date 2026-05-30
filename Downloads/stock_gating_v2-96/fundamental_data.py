@@ -882,3 +882,66 @@ def get_health_radar(ticker: str) -> dict:
     out["score"] = grade.get("score")
     out["ok"] = True
     return out
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Balance-sheet trend: shares outstanding + cash vs debt over time
+# ─────────────────────────────────────────────────────────────────────────
+
+def get_balance_trend(ticker: str, period: str = "annual") -> dict:
+    """Shares outstanding + cash + debt over time.
+
+    SOURCE PRIORITY: SEC EDGAR (deep history) → yfinance fallback (shares
+    only; yfinance doesn't expose clean cash/debt history on the free tier).
+
+    Returns {periods, shares, cash, debt, ok, note, source}.
+    """
+    t = (ticker or "").upper().strip()
+    blank = {"periods": [], "shares": [], "cash": [], "debt": [],
+             "ok": False, "note": "", "source": None}
+    if not t:
+        return blank
+
+    # ── EDGAR first ──
+    try:
+        import sec_edgar as se
+        edgar = se.get_long_balance_items(t, period=period, max_years=15)
+        if edgar and edgar.get("ok") and len(edgar.get("periods", [])) >= 3:
+            edgar["source"] = "sec_edgar"
+            return edgar
+    except Exception:
+        pass
+
+    # ── yfinance fallback (balance sheet — shares/cash/debt, ~4yr) ──
+    if yf is None:
+        blank["note"] = "yfinance unavailable and SEC EDGAR didn't resolve"
+        return blank
+    try:
+        tk = yf.Ticker(t)
+        bs = tk.balance_sheet
+    except Exception as e:
+        blank["note"] = f"balance sheet fetch failed: {type(e).__name__}"
+        return blank
+    if bs is None or bs.empty:
+        blank["note"] = "no balance-sheet data (free-tier limitation)"
+        return blank
+
+    cols = list(bs.columns)[::-1]
+    periods = [c.strftime("%Y") if hasattr(c, "strftime") else str(c)
+               for c in cols]
+
+    def brow(*names):
+        for n in names:
+            if n in bs.index:
+                return [_num(bs.loc[n].get(c)) for c in cols]
+        return [None] * len(cols)
+
+    shares = brow("Share Issued", "Ordinary Shares Number", "Common Stock Shares Outstanding")
+    cash = brow("Cash And Cash Equivalents", "Cash Cash Equivalents And Short Term Investments",
+                "CashAndCashEquivalents")
+    debt = brow("Total Debt", "Long Term Debt", "Net Debt")
+
+    return {"periods": periods, "shares": shares, "cash": cash, "debt": debt,
+            "ok": True,
+            "note": f"yfinance — {len(periods)} years (SEC EDGAR didn't resolve).",
+            "source": "yfinance"}

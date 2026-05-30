@@ -63,9 +63,9 @@ _GAUGE_LABELS = {
 
 def _gauge_title(name: str, stale: bool = False) -> str:
     """Two-line HTML gauge title: bold layman term + grey technical subtitle.
-    The 7 macro gauges now render on dark feature-cards, so the title text is
-    light (set via the indicator title font) and the subtitle is a light grey
-    that reads on the dark surface."""
+    The gauges render on dark navy cards, so the subtitle is a light grey
+    that reads on the dark surface (the bold layman line is set light via the
+    indicator title font)."""
     layman, technical = _GAUGE_LABELS.get(name, (name, ""))
     stale_tag = (" <span style='font-size:9px;color:#f5c344'>·STALE</span>"
                  if stale else "")
@@ -74,11 +74,12 @@ def _gauge_title(name: str, stale: bool = False) -> str:
 
 
 def _gauge(score, name=None, height=185, accent=None, stale=False):
-    """Macro gauge dial rendered on a dark 'feature card' surface in BOTH
-    themes (matching the hero cards), so the gauges read as deliberate dark
-    content tiles on the light page rather than floating on white."""
+    """Macro gauge dial rendered on a dark navy 'feature card' surface
+    (matching the hero cards). The figure's paper_bgcolor fills the whole
+    canvas with navy — the Plotly equivalent of the hero card's CSS
+    background — so the gauge reads as a deliberate dark content tile."""
     color = accent or theme.factor_color(score)
-    # Always light text + dark-surface bands (the gauge sits on a navy card).
+    # Light text + dark-surface bands (the gauge sits on a navy card).
     txt = "#e6ebf5"
     band_red = "rgba(255,93,108,0.16)"
     band_yel = "rgba(245,195,68,0.14)"
@@ -113,12 +114,8 @@ def _gauge(score, name=None, height=185, accent=None, stale=False):
     fig = go.Figure(go.Indicator(**indicator_kwargs))
     fig.update_layout(
         template="plotly_dark",
-        # The KEY fix: paper_bgcolor fills the ENTIRE figure canvas (margins,
-        # title area, everything) with dark navy — the Plotly equivalent of
-        # the left hero card's `background`. This is fully under our control
-        # and needs no CSS / Streamlit-DOM tricks, which is why the earlier
-        # attempts failed. plot_bgcolor stays transparent so the navy shows
-        # through behind the gauge arc too.
+        # paper_bgcolor fills the ENTIRE figure canvas (margins + title +
+        # plot) with dark navy — this is what makes each gauge a dark card.
         paper_bgcolor="#0f1320", plot_bgcolor="rgba(0,0,0,0)",
         font=dict(color=txt, family="Sora"),
         # generous top margin so the two-line title never clips
@@ -1229,14 +1226,16 @@ def render():
 
     def _render_gauge_cell(name):
         sig = signals[name]
-        # The gauge figure now fills its own canvas with dark navy
-        # (paper_bgcolor), so it IS the dark card — no container/CSS needed.
-        st.plotly_chart(
-            _gauge(sig["score"], name=name, height=185,
-                   stale=_metric_is_stale(name)),
-            width="stretch",
-            config={"displayModeBar": False},
-            key=f"macro_gauge_{name.replace(' ', '_').replace('/', '_')}")
+        # The gauge figure fills its own canvas with dark navy
+        # (paper_bgcolor), making each gauge a dark card. The bordered
+        # container gives it a clean edge/rounding around that dark fill.
+        with st.container(border=True):
+            st.plotly_chart(
+                _gauge(sig["score"], name=name, height=185,
+                       stale=_metric_is_stale(name)),
+                width="stretch",
+                config={"displayModeBar": False},
+                key=f"macro_gauge_{name.replace(' ', '_').replace('/', '_')}")
 
     # row 1: first 4 signals
     row1 = st.columns(4, gap="medium")

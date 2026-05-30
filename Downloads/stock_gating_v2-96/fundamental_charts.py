@@ -205,8 +205,54 @@ def single_metric_bar(periods, values, title: str, color: str,
         hovertemplate="%{customdata}<br>%{x}<extra></extra>",
     ))
     fig = _base(fig, title, height=height)
-    fig.update_yaxes(tickprefix="$", tickformat="~s")
+    _apply_money_yaxis(fig, values)
     return fig
+
+
+def _apply_money_yaxis(fig, values):
+    """Label the y-axis with finance-style $ suffixes (K/M/B/T) instead of
+    Plotly's SI default, which renders billions as 'G' (e.g. $100G). Builds
+    a handful of evenly-spaced ticks across the data range and formats each
+    with _humanize so the axis reads like a financial statement."""
+    nums = [float(v) for v in values if v is not None]
+    if not nums:
+        fig.update_yaxes(tickprefix="$")
+        return
+    lo = min(0.0, min(nums))   # include zero baseline for bar charts
+    hi = max(nums)
+    if hi <= lo:
+        hi = lo + 1
+    # ~5 evenly spaced ticks across [lo, hi]
+    n = 5
+    step = (hi - lo) / n
+    tickvals = [lo + step * i for i in range(n + 1)]
+    ticktext = [_humanize_axis(v) if v != 0 else "$0" for v in tickvals]
+    fig.update_yaxes(tickvals=tickvals, ticktext=ticktext,
+                     tickprefix="", tickformat="")
+
+
+def _humanize_axis(v) -> str:
+    """Compact $ label for axis ticks: '$100B', '$1.5T', '$50M' — fewer
+    decimals than the hover label so the axis stays uncluttered."""
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return ""
+    sign = "-" if n < 0 else ""
+    a = abs(n)
+    def trim(x):
+        # one decimal, but drop a trailing '.0'
+        s = f"{x:.1f}"
+        return s[:-2] if s.endswith(".0") else s
+    if a >= 1e12:
+        return f"{sign}${trim(a/1e12)}T"
+    if a >= 1e9:
+        return f"{sign}${trim(a/1e9)}B"
+    if a >= 1e6:
+        return f"{sign}${trim(a/1e6)}M"
+    if a >= 1e3:
+        return f"{sign}${trim(a/1e3)}K"
+    return f"{sign}${a:.0f}"
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -421,4 +467,109 @@ def health_radar_chart(radar: dict, ticker: str = "") -> go.Figure:
                              tickfont=dict(size=11, color=th["text"])),
         ),
     )
+    return fig
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Shares outstanding — dilution (rising) vs buyback (falling)
+# ─────────────────────────────────────────────────────────────────────────
+
+def shares_outstanding_chart(bal: dict, ticker: str = "") -> go.Figure:
+    """Shares outstanding over time. A rising line = dilution; a falling
+    line = buybacks. Coloured by the net trend so the read is instant."""
+    if not bal or not bal.get("ok") or not bal.get("periods"):
+        return _empty("Shares Outstanding",
+                      bal.get("note") or "No share-count data")
+    periods = bal["periods"]
+    shares = bal.get("shares") or []
+    pts = [(p, s) for p, s in zip(periods, shares) if s is not None]
+    if len(pts) < 2:
+        return _empty("Shares Outstanding", "Not enough share-count history")
+    xs = [p for p, _ in pts]
+    ys = [s for _, s in pts]
+    # Trend: falling shares (buyback) is shareholder-friendly → green;
+    # rising (dilution) → amber.
+    trend_up = ys[-1] > ys[0]
+    line_col = "#e8a838" if trend_up else _C_PRICE
+    label = "▲ diluting" if trend_up else "▼ buying back"
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=xs, y=ys, mode="lines+markers",
+        line=dict(color=line_col, width=2.5),
+        marker=dict(size=6, color=line_col),
+        fill="tozeroy",
+        fillcolor=("rgba(232,168,56,0.10)" if trend_up
+                   else "rgba(63,185,80,0.10)"),
+        customdata=[_humanize_shares(v) for v in ys],
+        hovertemplate="%{customdata} shares<br>%{x}<extra></extra>",
+    ))
+    fig = _base(fig, f"Shares Outstanding  {label}", height=300)
+    _apply_shares_yaxis(fig, ys)
+    return fig
+
+
+def _humanize_shares(v) -> str:
+    """Format a share count as 1.23B / 456.7M shares."""
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return "n/a"
+    a = abs(n)
+    if a >= 1e9:
+        return f"{n/1e9:.2f}B"
+    if a >= 1e6:
+        return f"{n/1e6:.1f}M"
+    if a >= 1e3:
+        return f"{n/1e3:.0f}K"
+    return f"{n:.0f}"
+
+
+def _apply_shares_yaxis(fig, values):
+    """Y-axis ticks as share counts (B/M), not SI 'G'."""
+    nums = [float(v) for v in values if v is not None]
+    if not nums:
+        return
+    lo, hi = min(nums), max(nums)
+    # Pad the range a little so the line isn't glued to the edges.
+    pad = (hi - lo) * 0.1 or hi * 0.05 or 1
+    lo, hi = lo - pad, hi + pad
+    n = 4
+    step = (hi - lo) / n
+    tickvals = [lo + step * i for i in range(n + 1)]
+    ticktext = [_humanize_shares(v) for v in tickvals]
+    fig.update_yaxes(tickvals=tickvals, ticktext=ticktext)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Cash vs Debt — grouped bars (net cash position read)
+# ─────────────────────────────────────────────────────────────────────────
+
+def cash_debt_chart(bal: dict, ticker: str = "") -> go.Figure:
+    """Cash (green) vs Debt (red) over time, grouped bars. Lets the user
+    see whether the balance sheet is strengthening (cash up / debt down)."""
+    if not bal or not bal.get("ok") or not bal.get("periods"):
+        return _empty("Cash vs Debt",
+                      bal.get("note") or "No balance-sheet data")
+    periods = bal["periods"]
+    cash = bal.get("cash") or []
+    debt = bal.get("debt") or []
+    if all(c is None for c in cash) and all(d is None for d in debt):
+        return _empty("Cash vs Debt", "No cash/debt data for this filer")
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=periods, y=cash, name="Cash", marker_color=_C_PRICE,
+        customdata=[_humanize(v) for v in cash],
+        hovertemplate="Cash: %{customdata}<extra></extra>"))
+    fig.add_trace(go.Bar(
+        x=periods, y=debt, name="Debt", marker_color="#e5544b",
+        customdata=[_humanize(v) for v in debt],
+        hovertemplate="Debt: %{customdata}<extra></extra>"))
+    fig = _base(fig, "Cash vs Debt", height=300, unified=True)
+    fig.update_layout(
+        barmode="group",
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="right",
+                    x=1, font=dict(size=10, color=_THEME["muted"])))
+    _apply_money_yaxis(fig, [v for v in (cash + debt) if v is not None])
     return fig

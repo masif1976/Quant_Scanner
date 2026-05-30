@@ -367,12 +367,25 @@ def render():
         """, unsafe_allow_html=True)
 
     # ── Live Watchlist Prices (moved here from Page 1 so Page 1 stays a
-    #    pure macro view). Reuses the same renderer to avoid duplicating the
-    #    market-cap-grouped price-card grid. ──
+    #    pure macro view). A distinct accent header card sets it apart from
+    #    the gray "Definitions" expanders above so the two don't get confused.
     try:
         from pages_lib.page_macro import _render_price_banner
         _wl = st.session_state.get("watchlist", [])
         if _wl:
+            st.markdown(
+                f"<div style='background:linear-gradient(135deg,"
+                f"{theme.ACCENT}22,{theme.ACCENT2}18);"
+                f"border:1px solid {theme.ACCENT}55;"
+                f"border-left:4px solid {theme.ACCENT};"
+                f"border-radius:10px;padding:10px 16px;margin:14px 0 4px 0'>"
+                f"<span style='font-family:JetBrains Mono;font-weight:700;"
+                f"letter-spacing:1px;color:{theme.ACCENT};font-size:0.9rem'>"
+                f"📊 LIVE WATCHLIST</span>"
+                f"<span style='color:{theme.MUTED};font-size:0.8rem;"
+                f"margin-left:10px'>real-time prices &amp; 52-week ranges · "
+                f"expand below</span></div>",
+                unsafe_allow_html=True)
             _render_price_banner(_wl)
     except Exception as _e:
         st.caption(f"Live watchlist prices unavailable: {type(_e).__name__}")

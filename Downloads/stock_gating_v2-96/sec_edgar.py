@@ -46,12 +46,29 @@ import urllib.request
 from datetime import datetime
 
 # SEC fair-access REQUIRES a descriptive User-Agent with contact info.
-# Requests without one get blocked. Users should ideally set their own via
-# the SEC_EDGAR_USER_AGENT env var; we fall back to a generic descriptive UA.
+# Resolution order: SEC_EDGAR_USER_AGENT env var → Streamlit secrets
+# ([sec] user_agent or SEC_EDGAR_USER_AGENT) → a generic fallback. SEC tends
+# to reject UAs that don't look like a real "Name email@domain" string.
 import os
-_USER_AGENT = os.environ.get(
-    "SEC_EDGAR_USER_AGENT",
-    "stock_gating_v2 research tool (contact: set SEC_EDGAR_USER_AGENT env var)")
+
+
+def _resolve_user_agent() -> str:
+    ua = os.environ.get("SEC_EDGAR_USER_AGENT")
+    if ua:
+        return ua
+    try:
+        import streamlit as st  # only available in the app context
+        sec = st.secrets.get("sec", {})
+        if isinstance(sec, dict) and sec.get("user_agent"):
+            return str(sec["user_agent"])
+        if st.secrets.get("SEC_EDGAR_USER_AGENT"):
+            return str(st.secrets["SEC_EDGAR_USER_AGENT"])
+    except Exception:
+        pass
+    return "stock-gating-research contact@example.com"
+
+
+_USER_AGENT = _resolve_user_agent()
 
 _TICKER_MAP_URL = "https://www.sec.gov/files/company_tickers.json"
 _FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
@@ -177,6 +194,27 @@ _TAG_CANDIDATES = {
     ],
     "current_liabilities": [
         "LiabilitiesCurrent",
+    ],
+    # Shares outstanding — dilution/buyback signal. These live under the
+    # "shares" unit, not "USD"; _extract_concept falls back to it automatically.
+    "shares_outstanding": [
+        "CommonStockSharesOutstanding",
+        "CommonStockSharesIssued",
+        "WeightedAverageNumberOfDilutedSharesOutstanding",
+        "WeightedAverageNumberOfSharesOutstandingBasic",
+    ],
+    # Cash & equivalents (sometimes incl. short-term investments).
+    "cash": [
+        "CashAndCashEquivalentsAtCarryingValue",
+        "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+        "CashAndShortTermInvestments",
+    ],
+    # Total debt — try a true total first, else long-term debt as a proxy.
+    "total_debt": [
+        "DebtLongtermAndShorttermCombinedAmount",
+        "LongTermDebtNoncurrent",
+        "LongTermDebt",
+        "DebtCurrent",
     ],
 }
 
@@ -364,4 +402,56 @@ def get_long_profitability(ticker: str, max_years: int = 15) -> dict:
     return {"periods": periods, "gross_margin": gm, "operating_margin": om,
             "roce": roce, "ok": True,
             "note": f"SEC EDGAR — {len(periods)} years (as-reported).",
+            "source": "sec_edgar"}
+
+
+def get_long_balance_items(ticker: str, period: str = "annual",
+                           max_years: int = 15) -> dict:
+    """Long-history shares outstanding + cash + debt from SEC EDGAR.
+
+    Returns {periods, shares, cash, debt, ok, note, source}.
+      - shares: common shares outstanding (dilution/buyback signal)
+      - cash:   cash & equivalents
+      - debt:   total (or long-term) debt
+    Balance-sheet items are point-in-time (no start date), so we keep the
+    period-end snapshots. Missing items per period come back as None.
+    """
+    blank = {"periods": [], "shares": [], "cash": [], "debt": [],
+             "ok": False, "note": "", "source": "sec_edgar"}
+    t = (ticker or "").upper().strip()
+    cik = ticker_to_cik(t)
+    if cik is None:
+        blank["note"] = f"{t} not found in SEC EDGAR (US filers only)"
+        return blank
+    facts = _get_company_facts(cik)
+    if not facts:
+        blank["note"] = "SEC EDGAR fetch failed"
+        return blank
+
+    shares = _extract_concept(facts, _TAG_CANDIDATES["shares_outstanding"], period)
+    cash = _extract_concept(facts, _TAG_CANDIDATES["cash"], period)
+    debt = _extract_concept(facts, _TAG_CANDIDATES["total_debt"], period)
+
+    all_dates = sorted(set(shares) | set(cash) | set(debt))
+    if not all_dates:
+        blank["note"] = "no usable XBRL balance-sheet concepts found"
+        return blank
+    keep = max_years if period == "annual" else max_years * 4
+    all_dates = all_dates[-keep:]
+
+    periods, sh, ca, de = [], [], [], []
+    for d in all_dates:
+        try:
+            dt = datetime.fromisoformat(d)
+            label = dt.strftime("%Y") if period == "annual" else dt.strftime("%Y-%m")
+        except Exception:
+            label = d
+        periods.append(label)
+        sh.append(shares.get(d))
+        ca.append(cash.get(d))
+        de.append(debt.get(d))
+
+    return {"periods": periods, "shares": sh, "cash": ca, "debt": de,
+            "ok": True,
+            "note": f"SEC EDGAR — {len(periods)} {period} periods (as-reported).",
             "source": "sec_edgar"}

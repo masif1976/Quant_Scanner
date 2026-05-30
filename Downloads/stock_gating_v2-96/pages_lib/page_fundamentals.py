@@ -434,12 +434,31 @@ def _render_detail(ticker: str):
         st.plotly_chart(fc.earnings_surprise_chart(es, ticker),
                         use_container_width=True, config=cfg)
 
+    # Row 4: Shares Outstanding | Cash vs Debt
+    bal = fd.get_balance_trend(ticker, period=period)
+    r4c1, r4c2 = st.columns(2)
+    with r4c1:
+        st.plotly_chart(fc.shares_outstanding_chart(bal, ticker),
+                        use_container_width=True, config=cfg)
+    with r4c2:
+        st.plotly_chart(fc.cash_debt_chart(bal, ticker),
+                        use_container_width=True, config=cfg)
+
+    # ── Data-source line (so it's never a mystery where numbers came from) ──
+    src = ts.get("source")
+    if src == "sec_edgar":
+        st.caption("✅ Financial statements: **SEC EDGAR** — as-reported, "
+                   "deep history (10-15yr where available).")
+    elif src == "yfinance":
+        st.caption("⚠️ Financial statements: **yfinance fallback** (~4-5yr). "
+                   "SEC EDGAR didn't resolve — set the `SEC_EDGAR_USER_AGENT` "
+                   "secret to a real `name email` for deep history (US filers).")
     if ts.get("note"):
-        st.caption(f"ℹ Statement data: {ts['note']}")
-    elif ts.get("source") == "sec_edgar":
-        st.caption("ℹ Statement data: SEC EDGAR (as-reported, deep history)")
+        st.caption(f"ℹ {ts['note']}")
     if es.get("note"):
         st.caption(f"ℹ Earnings data: {es['note']}")
+    if bal.get("note") and not bal.get("ok"):
+        st.caption(f"ℹ Balance sheet: {bal['note']}")
 
     # ── Deep-dive (expander with in-chart dropdown) ──
     with st.expander("🔬 Deep-dive: long-term profitability (ROCE / margins)"):
